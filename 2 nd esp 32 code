@@ -1,0 +1,129 @@
+#include <TinyGPS++.h> 
+#include <HardwareSerial.h> 
+#include <Stepper.h> 
+// Stepper Motor Configuration 
+#define IN1 19 
+#define IN2 21 
+#define IN3 22 
+#define IN4 23 
+const int stepsPerRevolution = 2048; 
+const int steps90Deg = stepsPerRevolution / 4; 
+Stepper stepper(stepsPerRevolution, IN1, IN3, IN2, IN4); 
+// GPS Configuration 
+TinyGPSPlus gps; 
+HardwareSerial SerialGPS(2); 
+#define gpsRx 18 
+#define gpsTx 5 
+// UART Communication 
+HardwareSerial SerialComm(1); 
+#define RX1 16 
+#define TX1 17 
+// Zone Definitions 
+struct Zone { 
+f
+loat lonMin; 
+f
+loat lonMax; 
+char zoneKey; 
+}; 
+Zone zones[3] = { 
+{78.080879, 78.081032, 'A'},  // Zone A 
+{78.081444, 78.081741, 'B'},  // Zone B 
+{78.082489, 78.082672, 'C'}   // Zone C 
+}; 
+// System Variables 
+bool selectedZones[3] = {false, false, false}; 
+bool inZone = false; 
+bool motorAt90 = false; 
+ 
+void setup() { 
+  Serial.begin(115200); 
+  SerialGPS.begin(9600, SERIAL_8N1, gpsRx, gpsTx); 
+  SerialComm.begin(9600, SERIAL_8N1, RX1, TX1); 
+  stepper.setSpeed(10); 
+ 
+  fixZoneRanges(); // Smart min/max auto-correction 
+  Serial.println("System Started. Waiting for GPS..."); 
+} 
+ 
+void loop() { 
+  receiveCommands(); 
+  if (!motorAt90) { 
+    readGPSData(); 
+  } 
+} 
+ 
+void receiveCommands() { 
+  while (SerialComm.available()) { 
+    char cmd = SerialComm.read(); 
+    switch(cmd) { 
+      case 'A': selectedZones[0] = true; break; 
+      case 'B': selectedZones[1] = true; break; 
+      case 'C': selectedZones[2] = true; break; 
+      case '1':  
+        stepper.step(steps90Deg); 
+        motorAt90 = true; 
+        break; 
+      case '2':  
+        stepper.step(-steps90Deg); 
+        motorAt90 = false; 
+        break; 
+      case '0': resetSystem(); break; 
+    } 
+  } 
+} 
+ 
+void readGPSData() { 
+  while (SerialGPS.available()) { 
+    gps.encode(SerialGPS.read()); 
+  } 
+ 
+  if (gps.location.isUpdated()) { 
+    float lon = gps.location.lng(); 
+    float lat = gps.location.lat(); 
+ 
+    //     PRINT longitude and latitude 
+    Serial.print("Longitude: "); 
+    Serial.print(lon, 6);  // 6 digits after decimal 
+    Serial.print(" | Latitude: "); 
+    Serial.println(lat, 6); 
+ 
+    bool nowInZone = false; 
+ 
+    for (int i = 0; i < 3; i++) { 
+      if (selectedZones[i] && lon >= zones[i].lonMin && lon <= zones[i].lonMax) { 
+        nowInZone = true; 
+        if (!inZone) { 
+          stepper.step(steps90Deg); 
+          SerialComm.write(zones[i].zoneKey); 
+          inZone = true; 
+        } 
+        break; 
+      } 
+    } 
+ 
+    if (!nowInZone && inZone) { 
+      stepper.step(-steps90Deg); 
+      inZone = false; 
+    } 
+  } 
+} 
+ 
+void resetSystem() { 
+  if (inZone || motorAt90) { 
+    stepper.step(-steps90Deg); 
+    inZone = false; 
+    motorAt90 = false; 
+  } 
+  selectedZones[0] = selectedZones[1] = selectedZones[2] = false; 
+} 
+ 
+void fixZoneRanges() { 
+  for (int i = 0; i < 3; i++) { 
+    if (zones[i].lonMin > zones[i].lonMax) { 
+      float temp = zones[i].lonMin; 
+      zones[i].lonMin = zones[i].lonMax; 
+      zones[i].lonMax = temp; 
+    } 
+  } 
+}
