@@ -1,0 +1,124 @@
+#include <Keypad.h> 
+#include <Stepper.h> 
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h> 
+#include <HardwareSerial.h> 
+LiquidCrystal_I2C lcd(0x27, 16, 2); 
+// Stepper Motor Configuration 
+#define IN1 19 
+#define IN2 21 
+#define IN3 22 
+#define IN4 23 
+const int stepsPerRevolution = 2048; 
+Stepper myStepper(stepsPerRevolution, IN1, IN3, IN2, IN4); 
+// UART Communication 
+HardwareSerial SerialComm(1); 
+#define RX1 16 
+#define TX1 17 
+// Keypad Configuration 
+const byte ROWS = 4; 
+const byte COLS = 4; 
+char keys[ROWS][COLS] = { 
+{'1','2','3','A'}, 
+{'4','5','6','B'}, 
+{'7','8','9','C'}, 
+{'*','0','#','D'} 
+}; 
+byte rowPins[ROWS] = {13, 12, 14, 27}; 
+byte colPins[COLS] = {26, 25, 33, 32}; 
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS); 
+// System Variables 
+int passengerCount = 50; 
+char selectedZone = '\0'; 
+bool waitingForConfirmation = false; 
+int confirmedPassengers[3] = {0, 0, 0}; 
+void setup() { 
+Serial.begin(115200); 
+SerialComm.begin(9600, SERIAL_8N1, RX1, TX1); 
+Wire.begin(4, 5); 
+lcd.init(); 
+lcd.backlight(); 
+myStepper.setSpeed(10); 
+updateDisplay("Select A/B/C"); 
+} 
+void loop() { 
+char key = keypad.getKey(); 
+if (key) { 
+if (key == '1') { 
+SerialComm.write('1'); 
+updateDisplay("Motor +90 Sent"); 
+} 
+else if (key == '2') { 
+SerialComm.write('2'); 
+      updateDisplay("Motor 0 Sent"); 
+    } 
+    else if (key == 'A' || key == 'B' || key == 'C') { 
+      selectedZone = key; 
+      waitingForConfirmation = true; 
+      updateDisplay(String("Selected: ") + key + " Press D"); 
+      rotateMotor(key); 
+    } 
+    else if (key == 'D' && waitingForConfirmation) { 
+      passengerCount--; 
+      int zoneIndex = getZoneIndex(selectedZone); 
+      confirmedPassengers[zoneIndex]++; 
+      SerialComm.write(selectedZone); 
+      waitingForConfirmation = false; 
+      updateDisplay(String("Confirmed: ") + selectedZone); 
+      selectedZone = '\0'; 
+    } 
+    else if (key == '0') { 
+      resetSystem(); 
+    } 
+  } 
+ 
+  if (SerialComm.available()) { 
+    char arrivedZone = SerialComm.read(); 
+    int zoneIndex = getZoneIndex(arrivedZone); 
+    if (zoneIndex >= 0 && confirmedPassengers[zoneIndex] > 0) { 
+      passengerCount += confirmedPassengers[zoneIndex]; 
+      updateDisplay(String("Arrived: ") + arrivedZone + " +" + confirmedPassengers[zoneIndex]); 
+      confirmedPassengers[zoneIndex] = 0; 
+      delay(2000); 
+      updateDisplay("Select A/B/C"); 
+} 
+} 
+} 
+int getZoneIndex(char zone) { 
+switch(toupper(zone)) { 
+case 'A': return 0; 
+case 'B': return 1; 
+case 'C': return 2; 
+default: return -1; 
+} 
+} 
+void rotateMotor(char zone) { 
+int degrees = 0; 
+switch(zone) { 
+case 'A': degrees = 90; break; 
+case 'B': degrees = 180; break; 
+case 'C': degrees = 270; break; 
+} 
+int steps = (stepsPerRevolution * degrees) / 360; 
+myStepper.step(steps); 
+delay(10000); 
+myStepper.step(-steps); 
+} 
+void resetSystem() { 
+passengerCount = 50; 
+selectedZone = '\0'; 
+waitingForConfirmation = false; 
+for (int i = 0; i < 3; i++) confirmedPassengers[i] = 0; 
+updateDisplay("System Reset"); 
+delay(1000); 
+updateDisplay("Select A/B/C"); 
+SerialComm.write('0'); 
+} 
+void updateDisplay(String message) { 
+lcd.clear(); 
+lcd.setCursor(0, 0); 
+lcd.print("Seats: "); 
+lcd.print(passengerCount); 
+lcd.setCursor(0, 1); 
+lcd.print(message); 
+}
